@@ -21,12 +21,11 @@ import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.database.Cursor;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.provider.MediaStore.Images;
+import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.support.v7.app.AlertDialog;
 import android.support.v7.app.AppCompatActivity;
@@ -74,6 +73,7 @@ import org.javarosa.core.model.instance.TreeElement;
 import org.javarosa.form.api.FormEntryCaption;
 import org.javarosa.form.api.FormEntryController;
 import org.javarosa.form.api.FormEntryPrompt;
+import org.joda.time.LocalDateTime;
 import org.odk.collect.android.R;
 import org.odk.collect.android.adapters.IconMenuListAdapter;
 import org.odk.collect.android.adapters.model.IconMenuItem;
@@ -83,7 +83,9 @@ import org.odk.collect.android.dao.InstancesDao;
 import org.odk.collect.android.exception.GDriveConnectionException;
 import org.odk.collect.android.exception.JavaRosaException;
 import org.odk.collect.android.external.ExternalDataManager;
+import org.odk.collect.android.fragments.dialogs.CustomDatePickerDialog;
 import org.odk.collect.android.fragments.dialogs.NumberPickerDialog;
+import org.odk.collect.android.injection.DependencyProvider;
 import org.odk.collect.android.listeners.AdvanceToNextListener;
 import org.odk.collect.android.listeners.FormLoaderListener;
 import org.odk.collect.android.listeners.FormSavedListener;
@@ -99,6 +101,8 @@ import org.odk.collect.android.provider.FormsProviderAPI.FormsColumns;
 import org.odk.collect.android.provider.InstanceProviderAPI;
 import org.odk.collect.android.provider.InstanceProviderAPI.InstanceColumns;
 import org.odk.collect.android.tasks.FormLoaderTask;
+import org.odk.collect.android.utilities.ActivityAvailability;
+import org.odk.collect.android.utilities.ImageConverter;
 import org.odk.collect.android.tasks.SavePointTask;
 import org.odk.collect.android.tasks.SaveResult;
 import org.odk.collect.android.tasks.SaveToDiskTask;
@@ -109,7 +113,6 @@ import org.odk.collect.android.utilities.MediaUtils;
 import org.odk.collect.android.utilities.TimerLogger;
 import org.odk.collect.android.utilities.ToastUtils;
 import org.odk.collect.android.views.ODKView;
-import org.odk.collect.android.widgets.BinaryWidget;
 import org.odk.collect.android.widgets.QuestionWidget;
 import org.odk.collect.android.widgets.RangeWidget;
 import org.odk.collect.android.widgets.StringWidget;
@@ -126,10 +129,7 @@ import timber.log.Timber;
 
 import static android.content.DialogInterface.BUTTON_NEGATIVE;
 import static android.content.DialogInterface.BUTTON_POSITIVE;
-import static org.odk.collect.android.preferences.PreferenceKeys.KEY_IMAGE_SIZE;
 import static org.odk.collect.android.utilities.ApplicationConstants.RequestCodes;
-import static org.odk.collect.android.utilities.ApplicationConstants.XML_OPENROSA_NAMESPACE;
-
 
 /**
  * FormEntryActivity is responsible for displaying questions, animating
@@ -141,7 +141,9 @@ import static org.odk.collect.android.utilities.ApplicationConstants.XML_OPENROS
  */
 public class FormEntryActivity extends AppCompatActivity implements AnimationListener,
         FormLoaderListener, FormSavedListener, AdvanceToNextListener,
-        OnGestureListener, SavePointListener, NumberPickerDialog.NumberPickerListener {
+        OnGestureListener, SavePointListener, NumberPickerDialog.NumberPickerListener,
+        DependencyProvider<ActivityAvailability>,
+        CustomDatePickerDialog.CustomDatePickerDialogListener {
 
     // save with every swipe forward or back. Timings indicate this takes .25
     // seconds.
@@ -181,6 +183,8 @@ public class FormEntryActivity extends AppCompatActivity implements AnimationLis
 
     // Tracks whether we are autosaving
     public static final String KEY_AUTO_SAVED = "autosaved";
+
+    public static final String EXTRA_TESTING_PATH = "testingPath";
 
     private static final int PROGRESS_DIALOG = 1;
     private static final int SAVING_DIALOG = 2;
@@ -231,6 +235,11 @@ public class FormEntryActivity extends AppCompatActivity implements AnimationLis
     private FormsDao formsDao;
 
     private Bundle state;
+
+    @NonNull
+    private ActivityAvailability activityAvailability = new ActivityAvailability(this);
+
+    private boolean shouldOverrideAnimations = false;
 
     /**
      * Called when the activity is first created.
@@ -287,6 +296,11 @@ public class FormEntryActivity extends AppCompatActivity implements AnimationLis
         String instancePath = null;
         boolean newForm = true;
         autoSaved = false;
+        // only check the buttons if it's enabled in preferences
+        String navigation = (String) GeneralSharedPreferences.getInstance().get(PreferenceKeys.KEY_NAVIGATION);
+        if (navigation.contains(PreferenceKeys.NAVIGATION_BUTTONS)) {
+            showNavigationButtons = true;
+        }
         if (savedInstanceState != null) {
             state = savedInstanceState;
             if (savedInstanceState.containsKey(KEY_FORMPATH)) {
@@ -362,7 +376,10 @@ public class FormEntryActivity extends AppCompatActivity implements AnimationLis
                     uriMimeType = getContentResolver().getType(uri);
                 }
 
-                if (uriMimeType != null && uriMimeType.equals(InstanceColumns.CONTENT_ITEM_TYPE)) {
+                if (uriMimeType == null && intent.hasExtra(EXTRA_TESTING_PATH)) {
+                    formPath = intent.getStringExtra(EXTRA_TESTING_PATH);
+
+                } else if (uriMimeType != null && uriMimeType.equals(InstanceColumns.CONTENT_ITEM_TYPE)) {
                     // get the formId and version for this instance...
                     String jrFormId = null;
                     String jrVersion = null;
@@ -692,7 +709,7 @@ public class FormEntryActivity extends AppCompatActivity implements AnimationLis
                  */
                 // The intent is empty, but we know we saved the image to the temp
                 // file
-                scaleDownImageIfNeeded(Collect.TMPFILE_PATH);
+                ImageConverter.execute(Collect.TMPFILE_PATH, getWidgetWaitingForBinaryData(), this);
                 File fi = new File(Collect.TMPFILE_PATH);
                 String instanceFolder = formController.getInstancePath()
                         .getParent();
@@ -825,7 +842,7 @@ public class FormEntryActivity extends AppCompatActivity implements AnimationLis
             if (chosenImage != null) {
                 final File newImage = new File(destImagePath);
                 FileUtils.copyFile(chosenImage, newImage);
-                scaleDownImageIfNeeded(newImage.getPath());
+                ImageConverter.execute(newImage.getPath(), getWidgetWaitingForBinaryData(), this);
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
@@ -859,89 +876,15 @@ public class FormEntryActivity extends AppCompatActivity implements AnimationLis
         }
     }
 
-    private void scaleDownImageIfNeeded(String path) {
-        Integer maxPixels;
-
-        QuestionWidget questionWidget = getWidgetWaitingForBinaryData();
-        if (questionWidget != null) {
-            maxPixels = getMaxPixelsFromFormIfDefined(questionWidget);
-
-            if (maxPixels == null) {
-                maxPixels = getMaxPixelsFromSettings();
-            }
-
-            if (maxPixels != null) {
-                scaleDownImage(path, maxPixels);
-            }
-        }
-    }
-
     private QuestionWidget getWidgetWaitingForBinaryData() {
         QuestionWidget questionWidget = null;
         for (QuestionWidget qw :  ((ODKView) currentView).getWidgets()) {
-            if (qw instanceof BinaryWidget && ((BinaryWidget) qw).isWaitingForBinaryData()) {
+            if (qw.isWaitingForData()) {
                 questionWidget = qw;
             }
         }
 
         return questionWidget;
-    }
-
-    private Integer getMaxPixelsFromFormIfDefined(QuestionWidget questionWidget) {
-        Integer maxPixels = null;
-        for (TreeElement attrs : questionWidget.getPrompt().getBindAttributes()) {
-            if ("max-pixels".equals(attrs.getName()) && XML_OPENROSA_NAMESPACE.equals(attrs.getNamespace())) {
-                try {
-                    maxPixels = Integer.parseInt(attrs.getAttributeValue());
-                } catch (NumberFormatException e) {
-                    Timber.i(e);
-                }
-            }
-        }
-        return maxPixels;
-    }
-
-    private Integer getMaxPixelsFromSettings() {
-        Integer maxPixels = null;
-        String imageSizeMode = (String) GeneralSharedPreferences.getInstance().get(KEY_IMAGE_SIZE);
-        String[] imageEntryValues = getResources().getStringArray(R.array.image_size_entry_values);
-        if (!imageSizeMode.equals(imageEntryValues[0])) {
-            if (imageSizeMode.equals(imageEntryValues[1])) {
-                maxPixels = 640;
-            } else if (imageSizeMode.equals(imageEntryValues[2])) {
-                maxPixels = 1024;
-            } else if (imageSizeMode.equals(imageEntryValues[3])) {
-                maxPixels = 2048;
-            } else if (imageSizeMode.equals(imageEntryValues[4])) {
-                maxPixels = 3072;
-            }
-        }
-        return maxPixels;
-    }
-
-    /*
-    This method is used to reduce an original picture size.
-    maxPixels refers to the max pixels of the long edge, the short edge is scaled proportionately.
-     */
-    private void scaleDownImage(String path, int maxPixels) {
-        Bitmap originalImage = FileUtils.getBitmap(path, new BitmapFactory.Options());
-
-        if (originalImage != null) {
-            double originalWidth = originalImage.getWidth();
-            double originalHeight = originalImage.getHeight();
-
-            if (originalWidth > originalHeight && originalWidth > maxPixels) {
-                int newHeight = (int) (originalHeight / (originalWidth / maxPixels));
-
-                Bitmap scaledImage = Bitmap.createScaledBitmap(originalImage, maxPixels, newHeight, false);
-                FileUtils.saveBitmapToFile(scaledImage, path);
-            } else if (originalHeight > maxPixels) {
-                int newWidth = (int) (originalWidth / (originalHeight / maxPixels));
-
-                Bitmap scaledImage = Bitmap.createScaledBitmap(originalImage, newWidth, maxPixels, false);
-                FileUtils.saveBitmapToFile(scaledImage, path);
-            }
-        }
     }
 
     private void saveAudioVideoAnswer(Uri media) {
@@ -1160,7 +1103,7 @@ public class FormEntryActivity extends AppCompatActivity implements AnimationLis
                     Collect.getInstance()
                             .getActivityLogger()
                             .logInstanceAction(this, "onContextItemSelected",
-                                    "createClearDialog", qw.getPrompt().getIndex());
+                                    "createClearDialog", qw.getFormEntryPrompt().getIndex());
                     createClearDialog(qw);
                     break;
                 }
@@ -1372,7 +1315,7 @@ public class FormEntryActivity extends AppCompatActivity implements AnimationLis
 
                 // Makes a "clear answer" menu pop up on long-click
                 for (QuestionWidget qw : odkv.getWidgets()) {
-                    if (!qw.getPrompt().isReadOnly()) {
+                    if (!qw.getFormEntryPrompt().isReadOnly()) {
                         // If it's a StringWidget register all its elements apart from EditText as
                         // we want to enable paste option after long click on the EditText
                         if (qw instanceof StringWidget) {
@@ -1625,6 +1568,11 @@ public class FormEntryActivity extends AppCompatActivity implements AnimationLis
         // complete setup for animations...
         inAnimation.setAnimationListener(this);
         outAnimation.setAnimationListener(this);
+
+        if (shouldOverrideAnimations) {
+            inAnimation.setDuration(0);
+            outAnimation.setDuration(0);
+        }
 
         // drop keyboard before transition...
         if (currentView != null) {
@@ -2151,12 +2099,12 @@ public class FormEntryActivity extends AppCompatActivity implements AnimationLis
         Collect.getInstance()
                 .getActivityLogger()
                 .logInstanceAction(this, "createClearDialog", "show",
-                        qw.getPrompt().getIndex());
+                        qw.getFormEntryPrompt().getIndex());
         alertDialog = new AlertDialog.Builder(this).create();
 
         alertDialog.setTitle(getString(R.string.clear_answer_ask));
 
-        String question = qw.getPrompt().getLongText();
+        String question = qw.getFormEntryPrompt().getLongText();
         if (question == null) {
             question = "";
         }
@@ -2176,7 +2124,7 @@ public class FormEntryActivity extends AppCompatActivity implements AnimationLis
                         Collect.getInstance()
                                 .getActivityLogger()
                                 .logInstanceAction(this, "createClearDialog",
-                                        "clearAnswer", qw.getPrompt().getIndex());
+                                        "clearAnswer", qw.getFormEntryPrompt().getIndex());
                         clearAnswer(qw);
                         saveAnswersForCurrentScreen(DO_NOT_EVALUATE_CONSTRAINTS);
                         break;
@@ -2184,7 +2132,7 @@ public class FormEntryActivity extends AppCompatActivity implements AnimationLis
                         Collect.getInstance()
                                 .getActivityLogger()
                                 .logInstanceAction(this, "createClearDialog",
-                                        "cancel", qw.getPrompt().getIndex());
+                                        "cancel", qw.getFormEntryPrompt().getIndex());
                         break;
                 }
             }
@@ -2430,12 +2378,6 @@ public class FormEntryActivity extends AppCompatActivity implements AnimationLis
             saveToDiskTask.setFormSavedListener(this);
         }
 
-        // only check the buttons if it's enabled in preferences
-        String navigation = (String) GeneralSharedPreferences.getInstance().get(PreferenceKeys.KEY_NAVIGATION);
-        if (navigation.contains(PreferenceKeys.NAVIGATION_BUTTONS)) {
-            showNavigationButtons = true;
-        }
-
         if (showNavigationButtons) {
             backButton.setVisibility(View.VISIBLE);
             nextButton.setVisibility(View.VISIBLE);
@@ -2603,13 +2545,16 @@ public class FormEntryActivity extends AppCompatActivity implements AnimationLis
                 }
             }
 
-            // if somehow we end up with a bad language, set it to the default
+            long start = System.currentTimeMillis();
+            Timber.i("calling formController.setLanguage");
             try {
                 formController.setLanguage(newLanguage);
             } catch (Exception e) {
+                // if somehow we end up with a bad language, set it to the default
                 Timber.e("Ended up with a bad language. %s", newLanguage);
                 formController.setLanguage(defaultLanguage);
             }
+            Timber.i("Done in %.3f seconds.", (System.currentTimeMillis() - start) / 1000F);
         }
 
         boolean pendingActivityResult = task.hasPendingActivityResult();
@@ -2999,6 +2944,14 @@ public class FormEntryActivity extends AppCompatActivity implements AnimationLis
         }
     }
 
+    @Override
+    public void onDateChanged(LocalDateTime date) {
+        ODKView odkView = getCurrentViewIfODKView();
+        if (odkView != null) {
+            odkView.setBinaryData(date);
+        }
+    }
+
     /**
      * getter for currentView variable. This method should always be used
      * to access currentView as an ODKView object to avoid inconsistency
@@ -3009,6 +2962,19 @@ public class FormEntryActivity extends AppCompatActivity implements AnimationLis
             return (ODKView) currentView;
         }
         return null;
+    }
+
+    @Override
+    public ActivityAvailability provide() {
+        return activityAvailability;
+    }
+
+    public void setActivityAvailability(@NonNull ActivityAvailability activityAvailability) {
+        this.activityAvailability = activityAvailability;
+    }
+
+    public void setShouldOverrideAnimations(boolean shouldOverrideAnimations) {
+        this.shouldOverrideAnimations = shouldOverrideAnimations;
     }
 
     /**

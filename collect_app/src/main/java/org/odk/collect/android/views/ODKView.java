@@ -48,7 +48,7 @@ import org.odk.collect.android.external.ExternalAppsUtils;
 import org.odk.collect.android.logic.FormController;
 import org.odk.collect.android.utilities.ToastUtils;
 import org.odk.collect.android.utilities.ViewIds;
-import org.odk.collect.android.widgets.BinaryWidget;
+import org.odk.collect.android.widgets.interfaces.BinaryWidget;
 import org.odk.collect.android.widgets.QuestionWidget;
 import org.odk.collect.android.widgets.WidgetFactory;
 
@@ -61,7 +61,7 @@ import java.util.Set;
 
 import timber.log.Timber;
 
-import static org.odk.collect.android.utilities.ApplicationConstants.RequestCodes.EX_GROUP_CAPTURE;
+import static org.odk.collect.android.utilities.ApplicationConstants.RequestCodes;
 
 /**
  * This class is
@@ -158,7 +158,7 @@ public class ODKView extends ScrollView implements OnLongClickListener {
                                 }
                             }
 
-                            ((Activity) getContext()).startActivityForResult(i, EX_GROUP_CAPTURE);
+                            ((Activity) getContext()).startActivityForResult(i, RequestCodes.EX_GROUP_CAPTURE);
                         } catch (ExternalParamsException e) {
                             Timber.e(e, "ExternalParamsException");
 
@@ -208,7 +208,7 @@ public class ODKView extends ScrollView implements OnLongClickListener {
         // Only execute it during forward swipes through the form 
         if (advancingPage && widgets.size() == 1) {
             final String playOption = widgets.get(
-                    0).getPrompt().getFormElement().getAdditionalAttribute(null, "autoplay");
+                    0).getFormEntryPrompt().getFormElement().getAdditionalAttribute(null, "autoplay");
             if (playOption != null) {
                 Handler handler = new Handler();
                 handler.postDelayed(new Runnable() {
@@ -259,7 +259,7 @@ public class ODKView extends ScrollView implements OnLongClickListener {
              * The FormEntryPrompt has the FormIndex, which is where the answer gets stored. The
              * QuestionWidget has the answer the user has entered.
              */
-            FormEntryPrompt p = q.getPrompt();
+            FormEntryPrompt p = q.getFormEntryPrompt();
             answers.put(p.getIndex(), q.getAnswer());
         }
 
@@ -315,9 +315,10 @@ public class ODKView extends ScrollView implements OnLongClickListener {
         boolean set = false;
         for (QuestionWidget q : widgets) {
             if (q instanceof BinaryWidget) {
-                if (((BinaryWidget) q).isWaitingForBinaryData()) {
+                BinaryWidget binaryWidget = (BinaryWidget) q;
+                if (binaryWidget.isWaitingForData()) {
                     try {
-                        ((BinaryWidget) q).setBinaryData(answer);
+                        binaryWidget.setBinaryData(answer);
                     } catch (Exception e) {
                         Timber.e(e);
                         ToastUtils.showLongToast(getContext().getString(R.string.error_attaching_binary_file,
@@ -342,10 +343,10 @@ public class ODKView extends ScrollView implements OnLongClickListener {
         Set<String> keys = bundle.keySet();
         for (String key : keys) {
             for (QuestionWidget questionWidget : widgets) {
-                FormEntryPrompt prompt = questionWidget.getPrompt();
+                FormEntryPrompt prompt = questionWidget.getFormEntryPrompt();
                 TreeReference treeReference =
                         (TreeReference) prompt.getFormElement().getBind().getReference();
-                
+
                 if (treeReference.getNameLast().equals(key)) {
 
                     switch (prompt.getDataType()) {
@@ -377,8 +378,8 @@ public class ODKView extends ScrollView implements OnLongClickListener {
         int count = 0;
         for (QuestionWidget q : widgets) {
             if (q instanceof BinaryWidget) {
-                if (((BinaryWidget) q).isWaitingForBinaryData()) {
-                    ((BinaryWidget) q).cancelWaitingForBinaryData();
+                if (q.isWaitingForData()) {
+                    q.cancelWaitingForData();
                     ++count;
                 }
             }
@@ -406,7 +407,7 @@ public class ODKView extends ScrollView implements OnLongClickListener {
     public boolean clearAnswer() {
         // If there's only one widget, clear the answer.
         // If there are more, then force a long-press to clear the answer.
-        if (widgets.size() == 1 && !widgets.get(0).getPrompt().isReadOnly()) {
+        if (widgets.size() == 1 && !widgets.get(0).getFormEntryPrompt().isReadOnly()) {
             widgets.get(0).clearAnswer();
             return true;
         } else {

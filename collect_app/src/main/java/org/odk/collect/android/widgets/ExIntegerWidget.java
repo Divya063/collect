@@ -30,7 +30,7 @@ import org.odk.collect.android.external.ExternalAppsUtils;
 
 import java.util.Locale;
 
-import static org.odk.collect.android.utilities.ApplicationConstants.RequestCodes.EX_INT_CAPTURE;
+import static org.odk.collect.android.utilities.ApplicationConstants.RequestCodes;
 
 /**
  * Launch an external app to supply an integer value. If the app
@@ -63,7 +63,7 @@ public class ExIntegerWidget extends ExStringWidget {
     }
 
     private Integer getIntegerAnswerValue() {
-        IAnswerData dataHolder = formEntryPrompt.getAnswerValue();
+        IAnswerData dataHolder = getFormEntryPrompt().getAnswerValue();
         Integer d = null;
         if (dataHolder != null) {
             Object dataValue = dataHolder.getValue();
@@ -82,15 +82,17 @@ public class ExIntegerWidget extends ExStringWidget {
     protected void fireActivity(Intent i) throws ActivityNotFoundException {
         i.putExtra("value", getIntegerAnswerValue());
         Collect.getInstance().getActivityLogger().logInstanceAction(this, "launchIntent",
-                i.getAction(), formEntryPrompt.getIndex());
-        ((Activity) getContext()).startActivityForResult(i, EX_INT_CAPTURE);
+                i.getAction(), getFormEntryPrompt().getIndex());
+
+        ((Activity) getContext()).startActivityForResult(i,
+                RequestCodes.EX_INT_CAPTURE);
     }
 
 
     @Override
     public IAnswerData getAnswer() {
         String s = answer.getText().toString();
-        if (s == null || s.equals("")) {
+        if (s.equals("")) {
             return null;
         } else {
             try {
@@ -103,13 +105,13 @@ public class ExIntegerWidget extends ExStringWidget {
 
 
     /**
-     * Allows answer to be set externally in {@Link FormEntryActivity}.
+     * Allows answer to be set externally in {@link FormEntryActivity}.
      */
     @Override
     public void setBinaryData(Object answer) {
         IntegerData integerData = ExternalAppsUtils.asIntegerData(answer);
         this.answer.setText(integerData == null ? null : integerData.getValue().toString());
-        Collect.getInstance().getFormController().setIndexWaitingForData(null);
+        cancelWaitingForData();
     }
 
 }

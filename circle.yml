@@ -47,10 +47,15 @@ test:
             background: true
             parallel: true
         - circle-android wait-for-boot
+        - adb shell input keyevent 82
+        - adb shell settings put global window_animation_scale 0
+        - adb shell settings put global transition_animation_scale 0
+        - adb shell settings put global animator_duration_scale 0
         - ./gradlew connectedCheck -Pandroid.useDexArchive=false
 
     post:
         - cp -r collect_app/build/reports/checkstyle $CIRCLE_TEST_REPORTS
+        - cp -r collect_app/build/reports/tests $CIRCLE_TEST_REPORTS
 
         - mkdir -p $CIRCLE_TEST_REPORTS/lint
         - find . -type f -regex ".*/collect_app/build/reports/lint-results-*.*" -exec cp {} $CIRCLE_TEST_REPORTS/lint/ \;
